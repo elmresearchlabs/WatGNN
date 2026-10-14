@@ -4,7 +4,6 @@ import numpy as np
 
 from torch import nn
 import torch
-import dgl
 import os,gc
 #https://github.com/NVIDIA/DeepLearningExamples/tree/master/DGLPyTorch/DrugDiscovery/SE3Transformer
 #SE3Transformer/se3_transformer/model
@@ -14,6 +13,7 @@ import os,gc
 
 #docker build -t se3-transformer .
 from se3_transformer import Fiber, SE3Transformer
+from se3_transformer.graph import Graph, radius_graph, to_simple
 from se3_transformer.layers import LinearSE3, NormSE3
 from watgnn_visualization import pdb_dict_as_pdb, pdb_dict_as_pdb_new
 from watgnn_input_preprocess import get_probe,partition_pdb_dict
@@ -120,7 +120,7 @@ class InteractionModule(nn.Module):
             low_memory=config['low_memory'],
         )
 
-    def forward(self, batch: dgl.DGLGraph, node_feats, edge_feats):
+    def forward(self, batch: Graph, node_feats, edge_feats):
         out = self.graph_module(batch, node_feats=node_feats, edge_feats=edge_feats)
         return out
 
@@ -227,12 +227,12 @@ class Model(nn.Module):
         edge_src_intra_torch = torch.tensor(edge_src_intra,dtype=torch.int64)
         edge_dst_intra_torch = torch.tensor(edge_dst_intra,dtype=torch.int64)
 
-        data = dgl.graph((edge_src_intra_torch,edge_dst_intra_torch),num_nodes = pos_list_all.shape[0]) #since probe will be included in nodes
+        data = Graph((edge_src_intra_torch,edge_dst_intra_torch),num_nodes = pos_list_all.shape[0]) #since probe will be included in nodes
 
 
         #add long range interaction for polar atom (no probe) 
         #====================================================================
-        data_lr =  dgl.radius_graph(pos_list_atm, graph_dist_lr, self_loop=False) #check collision between predicted water positions
+        data_lr =  radius_graph(pos_list_atm, graph_dist_lr, self_loop=False) #check collision between predicted water positions
 
         #print(dist_lr.shape) # L x 1
         edge_src_lr_torch, edge_dst_lr_torch = data_lr.edges() #shape: n_edge 
@@ -266,7 +266,7 @@ class Model(nn.Module):
         edge_dst_probe_torch = probe_link_list[:,1]
         data.add_edges(edge_src_probe_torch,edge_dst_probe_torch)
 
-        data = dgl.to_simple(data)
+        data = to_simple(data)
 
 
         #"""
@@ -305,10 +305,8 @@ class Model(nn.Module):
         
         #print(edge_feat.shape)
         data.edata["edge_feat_0"] = edge_feat[..., None]
-        if self.debug == True:
-            data_graph_dist = dgl.shortest_dist(data)
-        else:
-            data_graph_dist = None
+        # Graph distances were computed here for debugging; nothing reads them.
+        data_graph_dist = None
 
         #dsave_input
         if save_input:

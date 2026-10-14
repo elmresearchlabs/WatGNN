@@ -25,7 +25,8 @@ config = {
              'grid_start':-4.5,  #start point of grid (-4.5A from atom crd)
              'interval':4.5,     #grid interval 
              'water_cutoff':4.5,
-             'score_cutoff':0.65,
+             # The operating point of the redesign platform's water placement; upstream's default is 0.65.
+             'score_cutoff':0.1,
              'n_grid':2,         #maximum number of grid 
              'device':device,
              'shuffle':True, #enables shuffle for training 

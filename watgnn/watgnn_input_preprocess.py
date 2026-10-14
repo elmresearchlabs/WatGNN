@@ -3,7 +3,6 @@ from scipy.spatial.distance import cdist
 from scipy.stats import special_ortho_group #for random rotation
 import numpy as np
 import torch
-import dgl
 import os,gc
 
 def partition_pdb_dict(pdb_dict, max_atom=2500, no_partition = 5000): #split pdb_dict into multiple pdb_dict graphs with 
@@ -16,137 +15,12 @@ def partition_pdb_dict(pdb_dict, max_atom=2500, no_partition = 5000): #split pdb
     if (pos_list.shape[0] < no_partition) : #less than 5000 atoms
         return [pdb_dict] #no partition
     else:
-        n_partitions = max(2, 1+int(pos_list.shape[0]/max_atom))
-        print('input_preprocess.py - n_partitions',n_partitions)
-        graph_dist_lr = 10.0
-        graph_lr =  dgl.radius_graph(pos_list, graph_dist_lr, self_loop=False)
-        
-        partition_nodes = dgl.metis_partition_assignment(graph_lr, n_partitions)
-        partition_masks = [ partition_nodes == k for k in range(n_partitions)]
-        #print(partition_masks[1])
-        predecessor_list = [ list(set(list(graph_lr.predecessors(k)))) for k in range(pos_list.shape[0]) ]
-        #print(predecessor_list[0:4])
-        partition_neighbor_masks = [partition_nodes == k for k in range(n_partitions)]
-        for k in range(n_partitions):
-            for i in range(pos_list.shape[0]):
-                if partition_masks[k][i] == True:
-                    for n_idx in predecessor_list[i]:
-                        partition_neighbor_masks[k][int(n_idx)] = True #n_idx: tensor int / int(n_idx): int
-
-        resno_list_torch   = pdb_dict['resno_list']
-        #resno_all_list_torch   = probe_dict['resno_list']
-        crop_resno_set          = [list(set(resno_list_torch[partition_masks[k]].tolist())) for k in range(n_partitions)]
-        crop_resno_set_neighbor = [list(set(resno_list_torch[partition_neighbor_masks[k]].tolist())) for k in range(n_partitions)]
-        crop_mask               = [torch.any(torch.stack([torch.eq(resno_list_torch, crop_resno) for crop_resno in crop_resno_set[k]],dim=0), dim=0) for k in range(n_partitions)]
-        crop_mask_neighbor      = [torch.any(torch.stack([torch.eq(resno_list_torch, crop_resno) for crop_resno in crop_resno_set_neighbor[k]],dim=0), dim=0) for k in range(n_partitions)]
-        crop_mask_float = [ crop_mask[k].type(torch.float32) for k in range(n_partitions) ]
-           
-
-        #print(partitions)
-        #remove redundancy
-        polar_mask_list_new = [ pdb_dict['polar_mask_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-
-        #neighboring N/O atom has 0 in loss_mask_list, but the atom is included in the partitioned graph. 
-        loss_mask_list_new =  [torch.einsum('i,i->i',pdb_dict['loss_mask_list'],crop_mask_float[k])[crop_mask_neighbor[k]] for  k in range(n_partitions)]
-
-        #2. build rotation-invariant features
-        res_list_new     = [ pdb_dict['res_list'][crop_mask_neighbor[k]] for  k in range(n_partitions)]
-    
-        resname_list_new = [[] for  k in range(n_partitions)]
-    
-        atmname_list_new = [[] for  k in range(n_partitions)]
-        for k in range(n_partitions):
-            for i in range(n_atm):
-                if crop_mask_neighbor[k][i] == True:
-                    resname_list_new[k].append(pdb_dict['resname_list'][i])
-                    atmname_list_new[k].append(pdb_dict['atmname_list'][i])
-
-
-        resno_list_new   = [pdb_dict['resno_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        atm_list_new     = [pdb_dict['atm_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        charge_list_new =  [pdb_dict['charge_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        hyb_list_new =     [pdb_dict['hyb_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        water_cutoff_new = [pdb_dict['water_cutoff']  for k in range(n_partitions)]
-        n_water_list_new = [pdb_dict['n_water_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        n_water_int_list_new =     [pdb_dict['n_water_int_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        n_water_analysis_int_new = [pdb_dict['n_water_analysis_int'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-
-        n_water_ww_list_new =     [pdb_dict['n_water_ww_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        n_water_ww_int_list_new = [pdb_dict['n_water_ww_int_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        n_water_analysis_ww_int_new = [pdb_dict['n_water_analysis_ww_int'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-
-        #bond: should contain both atom index
-        atmno_crop_list = [torch.arange(n_atm)[crop_mask_neighbor[k]].tolist() for k in range(n_partitions)]
-        atmno_crop_inv =  [ [ None for i in range(n_atm)] for k in range(n_partitions)]
-        for k in range(n_partitions):
-            for idx, val in enumerate(atmno_crop_list[k]):
-                atmno_crop_inv[k][val] = idx
-
-        bond_list = pdb_dict['bond_list']
-        bond_list_mask = [torch.all(torch.any(torch.stack([torch.eq(bond_list, crop_atmno) for crop_atmno in atmno_crop_list[k]],dim=0), dim=0), dim=1) for k in range(n_partitions)]
-        bond_list_new_tmp = [bond_list[bond_list_mask[k]].tolist() for k in range(n_partitions)]
-        #change into new atom index, there seems to be no way faster than this...
-        bond_list_new = [torch.tensor([ [atmno_crop_inv[k][old_idx] for old_idx in bond] for bond in bond_list_new_tmp[k] ], dtype=torch.int64) for k in range(n_partitions)]
-
-        pos_list_new = [pdb_dict['pos_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        water_pos_new = pdb_dict['water_pos']
-
-        #4. make protein-water distance matrix
-        #To prevent possible loss of far-water ~ protein atom pair, 
-        # building distance matrix was done before adding gaussian noise to protein atom positions.
-        dist0 = [None for k in range(n_partitions)] 
-        for k in range(n_partitions):
-            if len(pos_list_new[k].shape) == 1: # pos_list_new[k].shape = [0]
-                dist0[k] = np.array([[999.999]])
-            elif len(water_pos_new.shape) == 1: # water_pos_new.shape = [0]
-                dist0[k] = np.array([ [999.999] for _ in range(pos_list_new[k].shape[0]) ])
-            else:
-                dist0[k] = cdist(pos_list_new[k], water_pos_new)
-
-        for k in range(n_partitions):
-            for i in range(polar_mask_list_new[k].shape[0]):
-                if polar_mask_list_new[k][i] != 1:
-                    dist0[k][i,:] = 999.999
-        mindist_new = [[ np.amin(dist0[k][:,j]) for j in range(len(water_pos_new))]for k in range(n_partitions)] #for debugging purpose
-    
-        #6. polar vector, axis (affected by rotation, gauissian noise) - random rotation only ... for now!
-        polar_vec_list_new =   [pdb_dict['polar_vec_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        axis_list_new =        [pdb_dict['axis_list'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        grid_diff_new =        [pdb_dict['grid_diff'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        neigh_water_diff_new = [pdb_dict['neigh_water_diff'][crop_mask_neighbor[k]] for k in range(n_partitions)]
-        neigh_water_diff_ww_new = [pdb_dict['neigh_water_diff_ww'][crop_mask_neighbor[k]] for k in range(n_partitions)] 
-
-        result = [{ 
-               
-                'pos_list':pos_list_new[k],  #position of atoms
-                'res_list':res_list_new[k], #residue type embedding
-                'resname_list':resname_list_new[k],
-                'resno_list':resno_list_new[k], #residue number indexing
-                'atm_list':atm_list_new[k], #atom type embedding
-                'atmname_list':atmname_list_new[k],                   #atom name
-                'bond_list':bond_list_new[k],  #new
-                'polar_vec_list':polar_vec_list_new[k], #polar vector new
-                'axis_list':axis_list_new[k], #torch tensor.
-                'charge_list':charge_list_new[k], #charge from charmm36 new
-                'hyb_list':hyb_list_new[k], #hybridization, 0 for sp2, 1 for sp3. new
-                'n_water_list':n_water_list_new[k],              #number of water nearby the atom
-                'n_water_int_list':n_water_int_list_new[k],
-                'n_water_analysis_int':n_water_analysis_int_new[k],
-                'grid_diff':grid_diff_new[k], #center of each grid, precalculated for prediction
-                'water_pos':water_pos_new,               #position of total water molecules Nx3
-                'water_cutoff':water_cutoff_new, #water
-                'neigh_water_diff':neigh_water_diff_new[k], # N x max_neigh x 3, saves difference between water crd and protein atom crd.
-                'polar_mask_list':polar_mask_list_new[k], #polar atom mask
-                'loss_mask_list':loss_mask_list_new[k], #polar atom mask
-                'n_water_ww_list':n_water_ww_list_new[k],              #number of water nearby the atom
-                'n_water_ww_int_list':n_water_ww_int_list_new[k],
-                'n_water_analysis_ww_int':n_water_analysis_ww_int_new[k],
-                'neigh_water_diff_ww':neigh_water_diff_ww_new[k], # N x max_neigh x 3, saves difference between water crd and protein atom crd.
-                'mindist':mindist_new[k]} for k in range(n_partitions)] 
-        del(partition_nodes)
-        torch.cuda.empty_cache()
-        gc.collect()
-        return result
+        # Splitting a structure into graph partitions needs a METIS partitioner, which this
+        # build does not carry.
+        raise ValueError(
+            "the input holds %d atoms; WatGNN predicts on inputs below %d atoms in one graph and "
+            "does not partition larger ones. Crop the structure around the site of interest."
+            % (pos_list.shape[0], no_partition))
 
 def transform(pdb_dict, config={},crop_pdb_dict=None):
     crop = False

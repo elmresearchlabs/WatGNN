@@ -4,7 +4,6 @@ import numpy as np
 from torch import nn,optim
 import torch
 import pickle
-import dgl
 from scipy.spatial.distance import cdist
 from scipy.stats import special_ortho_group #for random rotation
 

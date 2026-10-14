@@ -4,7 +4,7 @@ import numpy as np
 
 import torch
 import pickle
-import dgl
+from se3_transformer.graph import radius_graph
 from scipy.spatial.distance import cdist
 
 from watgnn_input_preprocess import transform, merge_pdb_dicts, get_probe, partition_pdb_dict
@@ -242,7 +242,7 @@ def eval_dataset(model, dataset, dataset_lig, config, log_dir = 'gnn_log', log_p
 
                 try:
                     #pred_types = [] #0:p-w / 1:w-w
-                    pred_graph =  dgl.radius_graph(pred_filt_torch[:n_max_water], config['clust_radius'], self_loop=False) #check collision between predicted water positions
+                    pred_graph =  radius_graph(pred_filt_torch[:n_max_water], config['clust_radius'], self_loop=False) #check collision between predicted water positions
                     #dgl.radius_graph: bidirected graph
                     edge_src, edge_dst = pred_graph.edges(order='srcdst') #shape: n_edge, order: src id - dst id, vertices are sorted with pred_n, and the graph is bidirectional
                     #thus, ordering with srcdst will be same as sorting with max(pred_n_filt[src],pred_n_filt[dst])

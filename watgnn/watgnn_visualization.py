@@ -6,7 +6,6 @@ import numpy as np
 from torch import nn,optim
 import torch
 import pickle
-import dgl
 
 def pdb_dict_as_pdb_new (pdb_dict, dgl_graph=None, outpath='x.pdb',bildpath=None):
     pdb_f = open(outpath,'w')
